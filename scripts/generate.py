@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""Génère profile.svg : contributions et statistiques GitHub.
+"""Génère header.svg (identité) et profile.svg (tableau de bord GitHub).
 
-Usage :
   GH_TOKEN=... GH_LOGIN=Matar18 python scripts/generate.py   # vraies données
   python scripts/generate.py --demo                          # aperçu (données fictives)
 """
 import datetime as dt
 import html
 import json
+import math
 import os
 import random
 import sys
@@ -15,35 +15,38 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOGIN = os.environ.get("GH_LOGIN", "Matar18")
-HANDLE = "matar"
-MONTHS = ["jan", "fév", "mar", "avr", "mai", "jun", "jul", "aoû", "sep", "oct", "nov", "déc"]
+
+# --- Identité (à modifier ici) ------------------------------------------------
+NAME = "Matar Ndoye"
+TITLE = "Data Analyst"
+STACK = ["Python", "SQL", "Power BI", "Machine Learning"]
+
+# --- Charte -------------------------------------------------------------------
+BG, PANEL, LINE, BORDER = "#0d1117", "#161b22", "#21262d", "#30363d"
+TEXT, MUTED, DIM = "#e6edf3", "#8b949e", "#6e7681"
+GREEN, GREEN2 = "#3fb950", "#2ea043"
+SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif"
+MONO = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace"
+MONTHS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
+W = 860
 
 QUERY = """
 query($login: String!) {
   user(login: $login) {
-    followers { totalCount }
-    repositories(ownerAffiliations: OWNER, isFork: false, privacy: PUBLIC, first: 100) {
-      totalCount
-      nodes { stargazerCount }
-    }
+    repositories(ownerAffiliations: OWNER, isFork: false, privacy: PUBLIC) { totalCount }
     contributionsCollection {
       totalCommitContributions
       totalPullRequestContributions
+      totalPullRequestReviewContributions
+      totalIssueContributions
       contributionCalendar {
         totalContributions
-        weeks { contributionDays { date contributionCount contributionLevel } }
+        weeks { contributionDays { date contributionCount } }
       }
     }
   }
 }
 """
-LEVELS = {"NONE": 0, "FIRST_QUARTILE": 1, "SECOND_QUARTILE": 2, "THIRD_QUARTILE": 3, "FOURTH_QUARTILE": 4}
-
-# Palette GitHub (thème sombre)
-BG, BORDER, PANEL = "#0d1117", "#30363d", "#161b22"
-TEXT, MUTED, BLUE = "#c9d1d9", "#8b949e", "#58a6ff"
-GREENS = ["#161b22", "#0e4429", "#006d32", "#26a641", "#39d353"]
-MONO = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', 'DejaVu Sans Mono', monospace"
 
 
 def fetch():
@@ -61,36 +64,121 @@ def fetch():
         sys.exit(f"Erreur GraphQL : {data['errors']}")
     u = data["data"]["user"]
     cc = u["contributionsCollection"]
-    days = [(dt.date.fromisoformat(d["date"]), d["contributionCount"], LEVELS[d["contributionLevel"]])
+    days = [(dt.date.fromisoformat(d["date"]), d["contributionCount"])
             for w in cc["contributionCalendar"]["weeks"] for d in w["contributionDays"]]
     return {
         "days": days,
         "total": cc["contributionCalendar"]["totalContributions"],
         "commits": cc["totalCommitContributions"],
         "prs": cc["totalPullRequestContributions"],
+        "reviews": cc["totalPullRequestReviewContributions"],
+        "issues": cc["totalIssueContributions"],
         "repos": u["repositories"]["totalCount"],
     }
 
 
 def demo():
-    rnd = random.Random(7)
+    rnd = random.Random(3)
     today = dt.date.today()
-    start = today - dt.timedelta(days=today.isoweekday() % 7 + 52 * 7)
-    days = []
-    for i in range((today - start).days + 1):
-        d = start + dt.timedelta(days=i)
-        c = 0 if rnd.random() < 0.3 else int(rnd.expovariate(1 / 4)) + 1
-        days.append((d, c, 0))
-    mx = max(c for _, c, _ in days)
-    days = [(d, c, 0 if c == 0 else min(4, 1 + int(4 * c / (mx + 1)))) for d, c, _ in days]
-    total = sum(c for _, c, _ in days)
-    return {"days": days, "total": total, "commits": int(total * 0.8), "prs": 42, "repos": 18}
+    days = [(today - dt.timedelta(days=i), 0 if rnd.random() < 0.45 else rnd.randint(1, 6)) for i in range(370)][::-1]
+    total = sum(c for _, c in days)
+    return {"days": days, "total": total, "commits": int(total * .7), "prs": 48, "reviews": 21,
+            "issues": 9, "repos": 12}
 
 
-def stats(data):
+# --- Outils -------------------------------------------------------------------
+def fmt(n):
+    return f"{n:,}".replace(",", "\u202f")
+
+
+def esc(s):
+    return html.escape(str(s))
+
+
+def text(x, y, s, size=12, fill=TEXT, weight=400, anchor="start", family="sans", extra=""):
+    return (f'<text x="{x:.1f}" y="{y:.1f}" font-family="{SANS if family == "sans" else MONO}" '
+            f'font-size="{size}" font-weight="{weight}" fill="{fill}" text-anchor="{anchor}" {extra}>{esc(s)}</text>')
+
+
+def smooth(pts):
+    """Courbe monotone (Fritsch-Carlson) : pas de dépassement sous la ligne de base."""
+    n = len(pts)
+    if n < 2:
+        return ""
+    dx = [pts[i + 1][0] - pts[i][0] for i in range(n - 1)]
+    m = [(pts[i + 1][1] - pts[i][1]) / dx[i] for i in range(n - 1)]
+    t = [m[0]] + [0 if m[i - 1] * m[i] <= 0 else (m[i - 1] + m[i]) / 2 for i in range(1, n - 1)] + [m[-1]]
+    for i in range(n - 1):
+        if m[i] == 0:
+            t[i] = t[i + 1] = 0
+        else:
+            a, b = t[i] / m[i], t[i + 1] / m[i]
+            s = a * a + b * b
+            if s > 9:
+                k = 3 / math.sqrt(s)
+                t[i], t[i + 1] = k * a * m[i], k * b * m[i]
+    d = f"M{pts[0][0]:.1f},{pts[0][1]:.1f}"
+    for i in range(n - 1):
+        (x0, y0), (x1, y1), h = pts[i], pts[i + 1], dx[i] / 3
+        d += f" C{x0 + h:.1f},{y0 + t[i] * h:.1f} {x1 - h:.1f},{y1 - t[i + 1] * h:.1f} {x1:.1f},{y1:.1f}"
+    return d
+
+
+def svg(h, body, label):
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{h}" viewBox="0 0 {W} {h}" '
+            f'role="img" aria-label="{esc(label)}">\n' + "\n".join(body) + "\n</svg>\n")
+
+
+# --- En-tête ------------------------------------------------------------------
+def header():
+    H = 230
+    b = [
+        '<defs>',
+        f'<pattern id="dots" width="18" height="18" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1.1" fill="{BORDER}"/></pattern>',
+        f'<radialGradient id="glow" cx="78%" cy="45%" r="55%"><stop offset="0" stop-color="{GREEN2}" stop-opacity=".28"/>'
+        f'<stop offset="1" stop-color="{GREEN2}" stop-opacity="0"/></radialGradient>',
+        f'<linearGradient id="fade" x1="0" x2="1"><stop offset="0" stop-color="{BG}"/><stop offset=".55" stop-color="{BG}" stop-opacity=".2"/>'
+        f'<stop offset="1" stop-color="{BG}" stop-opacity="0"/></linearGradient>',
+        f'<linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{GREEN}" stop-opacity=".45"/>'
+        f'<stop offset="1" stop-color="{GREEN}" stop-opacity="0"/></linearGradient>',
+        f'<clipPath id="card"><rect width="{W}" height="{H}" rx="16"/></clipPath>',
+        '</defs>',
+        f'<g clip-path="url(#card)"><rect width="{W}" height="{H}" fill="{BG}"/>'
+        f'<rect width="{W}" height="{H}" fill="url(#dots)"/><rect width="{W}" height="{H}" fill="url(#glow)"/>'
+        f'<rect width="{W}" height="{H}" fill="url(#fade)"/></g>',
+        f'<rect x=".5" y=".5" width="{W - 1}" height="{H - 1}" rx="16" fill="none" stroke="{BORDER}"/>',
+    ]
+    # Motif graphique (décoratif)
+    vals = [14, 22, 18, 29, 25, 37, 33, 44, 40, 52, 49, 61]
+    x0, x1, y0, y1 = 560, 812, 60, 178
+    step = (x1 - x0) / (len(vals) - 1)
+    pts = [(x0 + i * step, y1 - (y1 - y0) * v / 64) for i, v in enumerate(vals)]
+    for i, (x, y) in enumerate(pts):
+        b.append(f'<rect x="{x - 5:.1f}" y="{y + 8:.1f}" width="10" height="{y1 - y - 8:.1f}" rx="2" fill="{GREEN}" opacity="{.06 + .012 * i:.3f}"/>')
+    for gy in (y0, (y0 + y1) / 2, y1):
+        b.append(f'<line x1="{x0 - 12}" y1="{gy:.1f}" x2="{x1 + 12}" y2="{gy:.1f}" stroke="{LINE}" stroke-dasharray="2 5"/>')
+    path = smooth(pts)
+    b.append(f'<path d="{path} L{pts[-1][0]:.1f},{y1} L{pts[0][0]:.1f},{y1} Z" fill="url(#area)"/>')
+    b.append(f'<path d="{path}" fill="none" stroke="{GREEN}" stroke-width="2.5" stroke-linecap="round"/>')
+    lx, ly = pts[-1]
+    b.append(f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="9" fill="{GREEN}" opacity=".18"/><circle cx="{lx:.1f}" cy="{ly:.1f}" r="4.5" fill="{GREEN}"/>')
+    # Identité
+    b.append(f'<circle cx="52" cy="58" r="4" fill="{GREEN}"/>')
+    b.append(text(64, 62, f"github.com/{LOGIN}", 12, MUTED, family="mono"))
+    b.append(text(46, 118, NAME, 46, TEXT, 700, extra='letter-spacing="-0.5"'))
+    b.append(text(48, 152, TITLE, 20, GREEN, 600))
+    x = 48
+    for s in STACK:
+        w = 22 + len(s) * 7.1
+        b.append(f'<rect x="{x}" y="172" width="{w:.1f}" height="28" rx="14" fill="{PANEL}" stroke="{BORDER}"/>')
+        b.append(text(x + w / 2, 190.5, s, 12.5, "#c9d1d9", 500, "middle"))
+        x += w + 10
+    return svg(H, b, f"{NAME} — {TITLE}")
+
+
+# --- Tableau de bord ----------------------------------------------------------
+def dashboard(data):
     days = data["days"]
-    today = days[-1][0]
-    # Série actuelle : on ne pénalise pas la journée en cours si elle est encore vide
     i = len(days) - 1
     if days[i][1] == 0:
         i -= 1
@@ -98,128 +186,89 @@ def stats(data):
     while i >= 0 and days[i][1] > 0:
         streak += 1
         i -= 1
-    active = sum(1 for _, c, _ in days if c > 0)
-    # Contributions par mois (12 derniers mois, mois en cours inclus)
-    months = []
-    y, m = today.year, today.month
-    for _ in range(12):
-        months.append((y, m))
-        y, m = (y, m - 1) if m > 1 else (y - 1, 12)
-    months.reverse()
-    per = {k: 0 for k in months}
-    for d, c, _ in days:
-        if (d.year, d.month) in per:
-            per[(d.year, d.month)] += c
-    return streak, active, [(MONTHS[m - 1], per[(y, m)]) for y, m in months]
+    active = sum(1 for _, c in days if c > 0)
+    weeks = {}
+    for d, c in days:
+        k = d - dt.timedelta(days=d.isoweekday() % 7)
+        weeks[k] = weeks.get(k, 0) + c
+    weekly = sorted(weeks.items())[-26:]
 
-
-def fmt(n):
-    return f"{n:,}".replace(",", "\u202f")
-
-
-def prompt(x, y, cmd):
-    return (f'<text x="{x}" y="{y}" class="mono" font-size="13">'
-            f'<tspan fill="#3fb950">{HANDLE}@github</tspan><tspan fill="{BLUE}"> ~ </tspan>'
-            f'<tspan fill="{TEXT}">$ {html.escape(cmd)}</tspan></text>')
-
-
-def build(data):
-    streak, active, monthly = stats(data)
-    days = data["days"]
-    W = 860
-    out = []
-
-    # --- Contributions (heatmap) ---------------------------------------------
-    step, cell, gx, gy = 14, 11, 60, 100
-    first = days[0][0]
-    offset = first.isoweekday() % 7  # dimanche = 0, comme GitHub
-    last_month = None
-    for idx, (d, c, lvl) in enumerate(days):
-        k = idx + offset
-        col, row = divmod(k, 7)
-        x, y = gx + col * step, gy + row * step
-        out.append(f'<rect x="{x}" y="{y}" width="{cell}" height="{cell}" rx="2" fill="{GREENS[lvl]}">'
-                   f'<title>{d.isoformat()} : {c}</title></rect>')
-        if row == 0 and d.month != last_month and d.day <= 7:
-            out.append(f'<text x="{x}" y="{gy - 8}" class="mono muted" font-size="10">{MONTHS[d.month - 1]}</text>')
-            last_month = d.month
-    for row, lab in ((1, "lun"), (3, "mer"), (5, "ven")):
-        out.append(f'<text x="24" y="{gy + row * step + 9}" class="mono muted" font-size="10">{lab}</text>')
-    ly = gy + 7 * step + 20
-    out.append(f'<text x="{gx}" y="{ly}" class="mono" font-size="12" fill="{TEXT}">'
-               f'{fmt(data["total"])} contributions au cours des 12 derniers mois</text>')
-    lx = W - 36 - 5 * step - 34
-    out.append(f'<text x="{lx - 40}" y="{ly}" class="mono muted" font-size="10">moins</text>')
-    for i, g in enumerate(GREENS):
-        out.append(f'<rect x="{lx + i * step}" y="{ly - 10}" width="{cell}" height="{cell}" rx="2" fill="{g}"/>')
-    out.append(f'<text x="{lx + 5 * step + 4}" y="{ly}" class="mono muted" font-size="10">plus</text>')
-
-    # --- Tuiles de statistiques ---------------------------------------------
-    sy = ly + 46
-    out.append(prompt(24, sy - 6, "whoami --stats"))
-    rx, rw = 24, W - 48
-    gap, th = 12, 72
-    tw = (rw - 5 * gap) / 6
-    tiles = [
-        (fmt(data["total"]), "contributions"),
-        (fmt(data["commits"]), "commits"),
-        (fmt(data["prs"]), "pull requests"),
-        (fmt(data["repos"]), "dépôts publics"),
-        (fmt(streak), "jours de série"),
-        (fmt(active), "jours actifs"),
-    ]
-    ty = sy + 12
-    for i, (v, lab) in enumerate(tiles):
-        x = rx + i * (tw + gap)
-        out.append(f'<rect x="{x:.1f}" y="{ty}" width="{tw:.1f}" height="{th}" rx="8" fill="{PANEL}" stroke="{BORDER}"/>')
-        out.append(f'<text x="{x + 14:.1f}" y="{ty + 36}" class="mono" font-size="22" font-weight="700" fill="{GREENS[4]}">{v}</text>')
-        out.append(f'<text x="{x + 14:.1f}" y="{ty + 57}" class="mono muted" font-size="11">{lab}</text>')
-
-    # --- Histogramme mensuel -------------------------------------------------
-    cy0 = ty + th + 40
-    out.append(f'<text x="{rx}" y="{cy0}" class="mono muted" font-size="12">contributions / mois</text>')
-    top, base = cy0 + 30, cy0 + 210
-    out.append(f'<line x1="{rx}" y1="{base}" x2="{rx + rw}" y2="{base}" stroke="{BORDER}"/>')
-    mx = max(v for _, v in monthly) or 1
-    slot = rw / 12
-    bw = 34
-    for i, (lab, v) in enumerate(monthly):
-        h = 0 if v == 0 else max(2, (base - top) * v / mx)
-        x = rx + i * slot + (slot - bw) / 2
-        col = GREENS[4] if i == 11 else GREENS[3]
-        out.append(f'<rect x="{x:.1f}" y="{base - h:.1f}" width="{bw}" height="{h:.1f}" rx="3" fill="{col}">'
-                   f'<title>{lab} : {v}</title></rect>')
-        if v:
-            out.append(f'<text x="{x + bw / 2:.1f}" y="{base - h - 5:.1f}" text-anchor="middle" class="mono muted" font-size="10">{v}</text>')
-        out.append(f'<text x="{x + bw / 2:.1f}" y="{base + 16}" text-anchor="middle" class="mono muted" font-size="10">{lab}</text>')
-    art_bottom = base + 16
-
-    # --- Pied ----------------------------------------------------------------
-    fy = art_bottom + 36
+    H = 446
     now = dt.datetime.now(dt.timezone.utc).strftime("%d/%m/%Y")
-    out.append(prompt(24, fy, ""))
-    out.append(f'<rect x="{24 + 17 * 7.8 + 2:.0f}" y="{fy - 11}" width="8" height="14" fill="{GREENS[4]}"><animate attributeName="opacity" values="1;0" dur="1.1s" calcMode="discrete" repeatCount="indefinite"/></rect>')
-    out.append(f'<text x="{W - 24}" y="{fy}" text-anchor="end" class="mono muted" font-size="10">mis à jour le {now}</text>')
-    H = fy + 22
-
-    head = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}" role="img" '
-        f'aria-label="Profil GitHub de {LOGIN}">',
-        f'<style>.mono{{font-family:{MONO}}}.muted{{fill:{MUTED}}}'
-        '</style>',
-        f'<rect x="0.5" y="0.5" width="{W - 1}" height="{H - 1}" rx="12" fill="{BG}" stroke="{BORDER}"/>',
-        f'<path d="M0.5 36 H{W - 0.5}" stroke="{BORDER}"/>',
-        '<circle cx="22" cy="18" r="6" fill="#ff5f56"/><circle cx="42" cy="18" r="6" fill="#ffbd2e"/>'
-        '<circle cx="62" cy="18" r="6" fill="#27c93f"/>',
-        f'<text x="{W / 2}" y="22" text-anchor="middle" class="mono muted" font-size="12">{HANDLE}@github: ~</text>',
-        prompt(24, 64, "contributions --last-year"),
+    b = [
+        '<defs>',
+        f'<linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{GREEN}" stop-opacity=".35"/>'
+        f'<stop offset="1" stop-color="{GREEN}" stop-opacity="0"/></linearGradient>',
+        f'<linearGradient id="bar" x1="0" x2="1"><stop offset="0" stop-color="{GREEN2}"/><stop offset="1" stop-color="{GREEN}"/></linearGradient>',
+        '</defs>',
+        f'<rect x=".5" y=".5" width="{W - 1}" height="{H - 1}" rx="16" fill="{BG}" stroke="{BORDER}"/>',
+        f'<circle cx="34" cy="37" r="4" fill="{GREEN}"/>',
+        text(46, 41, "ACTIVITÉ GITHUB", 11, MUTED, 600, extra='letter-spacing="1.6"'),
+        text(W - 28, 41, f"12 derniers mois · mis à jour le {now}", 11, DIM, anchor="end"),
     ]
-    return "\n".join(head + out + ["</svg>"]) + "\n"
+
+    # Indicateurs
+    tiles = [("Contributions", data["total"]), ("Commits", data["commits"]), ("Pull requests", data["prs"]),
+             ("Dépôts publics", data["repos"]), ("Jours actifs", active)]
+    gap, ty, th = 14, 62, 100
+    tw = (W - 56 - gap * (len(tiles) - 1)) / len(tiles)
+    for k, (lab, v) in enumerate(tiles):
+        x = 28 + k * (tw + gap)
+        b.append(f'<rect x="{x:.1f}" y="{ty}" width="{tw:.1f}" height="{th}" rx="12" fill="{PANEL}" stroke="{LINE}"/>')
+        b.append(f'<rect x="{x + 18:.1f}" y="{ty + 18}" width="18" height="3" rx="1.5" fill="{GREEN}"/>')
+        b.append(text(x + 18, ty + 44, lab.upper(), 10.5, MUTED, 600, extra='letter-spacing="1"'))
+        b.append(text(x + 18, ty + 82, fmt(v), 30, TEXT, 700, extra='letter-spacing="-0.5"'))
+
+    # Panneau : contributions par semaine
+    py, ph = ty + th + 14, 242
+    px, pw = 28, 500
+    b.append(f'<rect x="{px}" y="{py}" width="{pw}" height="{ph}" rx="12" fill="{PANEL}" stroke="{LINE}"/>')
+    b.append(text(px + 22, py + 34, "Contributions par semaine", 14, TEXT, 600))
+    b.append(text(px + 22, py + 54, f"26 dernières semaines · série actuelle : {streak} jour{'s' if streak > 1 else ''}", 11.5, MUTED))
+    cx0, cx1, cy0, cy1 = px + 22, px + pw - 22, py + 78, py + 200
+    mx = max([v for _, v in weekly] + [1])
+    for g in range(3):
+        gy = cy0 + (cy1 - cy0) * g / 2
+        b.append(f'<line x1="{cx0}" y1="{gy:.1f}" x2="{cx1}" y2="{gy:.1f}" stroke="{LINE}" stroke-dasharray="{"" if g == 2 else "2 5"}"/>')
+    b.append(text(cx1, cy0 - 6, f"max {mx}", 10, DIM, anchor="end"))
+    stepx = (cx1 - cx0) / max(1, len(weekly) - 1)
+    pts = [(cx0 + k * stepx, cy1 - (cy1 - cy0) * v / mx) for k, (_, v) in enumerate(weekly)]
+    path = smooth(pts)
+    b.append(f'<path d="{path} L{pts[-1][0]:.1f},{cy1} L{pts[0][0]:.1f},{cy1} Z" fill="url(#area)"/>')
+    b.append(f'<path d="{path}" fill="none" stroke="{GREEN}" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>')
+    lx, ly = pts[-1]
+    b.append(f'<circle cx="{lx:.1f}" cy="{ly:.1f}" r="8" fill="{GREEN}" opacity=".18"/><circle cx="{lx:.1f}" cy="{ly:.1f}" r="4" fill="{GREEN}"/>')
+    last_m, last_x = None, -99
+    for k, (wk, _) in enumerate(weekly):
+        x = pts[k][0]
+        if wk.month != last_m and x - last_x > 34:
+            b.append(text(x, cy1 + 22, MONTHS[wk.month - 1], 10.5, DIM, anchor="middle" if 0 < k < len(weekly) - 1 else "start"))
+            last_m, last_x = wk.month, x
+        last_m = wk.month
+
+    # Panneau : répartition
+    rx, rw = px + pw + 14, W - 28 - (px + pw + 14)
+    b.append(f'<rect x="{rx}" y="{py}" width="{rw}" height="{ph}" rx="12" fill="{PANEL}" stroke="{LINE}"/>')
+    b.append(text(rx + 22, py + 34, "Répartition", 14, TEXT, 600))
+    b.append(text(rx + 22, py + 54, "par type de contribution", 11.5, MUTED))
+    parts = [("Commits", data["commits"]), ("Pull requests", data["prs"]),
+             ("Revues de code", data["reviews"]), ("Issues", data["issues"])]
+    tot = sum(v for _, v in parts) or 1
+    bw = rw - 44
+    for k, (lab, v) in enumerate(parts):
+        y = py + 92 + k * 38
+        pct = round(100 * v / tot)
+        b.append(text(rx + 22, y, lab, 12.5, "#c9d1d9", 500))
+        b.append(text(rx + rw - 22, y, f"{pct} %", 12.5, TEXT, 600, "end"))
+        b.append(f'<rect x="{rx + 22}" y="{y + 9}" width="{bw}" height="6" rx="3" fill="{LINE}"/>')
+        if v:
+            b.append(f'<rect x="{rx + 22}" y="{y + 9}" width="{max(6, bw * v / tot):.1f}" height="6" rx="3" fill="url(#bar)"/>')
+    return svg(H, b, f"Activité GitHub de {LOGIN}")
 
 
 if __name__ == "__main__":
     data = demo() if "--demo" in sys.argv else fetch()
-    path = os.path.join(ROOT, "profile.svg")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(build(data))
-    print(f"OK : {path}")
+    for name, content in (("header.svg", header()), ("profile.svg", dashboard(data))):
+        with open(os.path.join(ROOT, name), "w", encoding="utf-8") as f:
+            f.write(content)
+    print("OK : header.svg, profile.svg")
