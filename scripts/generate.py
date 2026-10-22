@@ -19,7 +19,7 @@ LOGIN = os.environ.get("GH_LOGIN", "Matar18")
 
 # --- Identité (à modifier ici) ------------------------------------------------
 NAME = "Matar Ndoye"
-TITLE = "Data Analyst"
+TITLE = "Data Analyst & IA"
 STACK = ["Python", "SQL", "Power BI", "Machine Learning"]
 
 # --- Charte (thèmes sombre et clair) -----------------------------------------
