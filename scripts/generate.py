@@ -18,7 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LOGIN = os.environ.get("GH_LOGIN", "Matar18")
 
 # --- Identité (à modifier ici) ------------------------------------------------
-NAME = "Matar Ndoye"
+NAME = "Matar N. KEITA"
 TITLE = "Data Analyst & IA"
 STACK = ["Python", "SQL", "Power BI", "Machine Learning"]
 
