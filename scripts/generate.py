@@ -1,5 +1,3 @@
-ligne1
-    ligne2 "x" é
 #!/usr/bin/env python3
 """Génère profile.svg : contributions et statistiques GitHub.
 
