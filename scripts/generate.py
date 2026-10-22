@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Génère header.svg (identité) et profile.svg (tableau de bord GitHub).
+"""Génère header.svg (identité) et profile.svg (tableau de bord GitHub),
+plus leurs variantes -light pour le thème clair.
 
   GH_TOKEN=... GH_LOGIN=Matar18 python scripts/generate.py   # vraies données
   python scripts/generate.py --demo                          # aperçu (données fictives)
@@ -21,10 +22,20 @@ NAME = "Matar Ndoye"
 TITLE = "Data Analyst"
 STACK = ["Python", "SQL", "Power BI", "Machine Learning"]
 
-# --- Charte -------------------------------------------------------------------
-BG, PANEL, LINE, BORDER = "#0d1117", "#161b22", "#21262d", "#30363d"
-TEXT, MUTED, DIM = "#e6edf3", "#8b949e", "#6e7681"
-GREEN, GREEN2 = "#3fb950", "#2ea043"
+# --- Charte (thèmes sombre et clair) -----------------------------------------
+THEMES = {
+    "dark": dict(BG="#0d1117", PANEL="#161b22", LINE="#21262d", BORDER="#30363d", TEXT="#e6edf3", SOFT="#c9d1d9",
+                 MUTED="#8b949e", DIM="#6e7681", GREEN="#3fb950", GREEN2="#2ea043", GLOW=".28", HAREA=".45", AREA=".35"),
+    "light": dict(BG="#ffffff", PANEL="#f6f8fa", LINE="#d8dee4", BORDER="#d0d7de", TEXT="#1f2328", SOFT="#31373d",
+                  MUTED="#59636e", DIM="#818b98", GREEN="#1a7f37", GREEN2="#2da44e", GLOW=".14", HAREA=".28", AREA=".22"),
+}
+
+
+def use(theme):
+    globals().update(THEMES[theme])
+
+
+use("dark")
 SANS = "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif"
 MONO = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace"
 MONTHS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
@@ -95,7 +106,8 @@ def esc(s):
     return html.escape(str(s))
 
 
-def text(x, y, s, size=12, fill=TEXT, weight=400, anchor="start", family="sans", extra=""):
+def text(x, y, s, size=12, fill=None, weight=400, anchor="start", family="sans", extra=""):
+    fill = fill or TEXT
     return (f'<text x="{x:.1f}" y="{y:.1f}" font-family="{SANS if family == "sans" else MONO}" '
             f'font-size="{size}" font-weight="{weight}" fill="{fill}" text-anchor="{anchor}" {extra}>{esc(s)}</text>')
 
@@ -135,11 +147,11 @@ def header():
     b = [
         '<defs>',
         f'<pattern id="dots" width="18" height="18" patternUnits="userSpaceOnUse"><circle cx="1.5" cy="1.5" r="1.1" fill="{BORDER}"/></pattern>',
-        f'<radialGradient id="glow" cx="78%" cy="45%" r="55%"><stop offset="0" stop-color="{GREEN2}" stop-opacity=".28"/>'
+        f'<radialGradient id="glow" cx="78%" cy="45%" r="55%"><stop offset="0" stop-color="{GREEN2}" stop-opacity="{GLOW}"/>'
         f'<stop offset="1" stop-color="{GREEN2}" stop-opacity="0"/></radialGradient>',
         f'<linearGradient id="fade" x1="0" x2="1"><stop offset="0" stop-color="{BG}"/><stop offset=".55" stop-color="{BG}" stop-opacity=".2"/>'
         f'<stop offset="1" stop-color="{BG}" stop-opacity="0"/></linearGradient>',
-        f'<linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{GREEN}" stop-opacity=".45"/>'
+        f'<linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{GREEN}" stop-opacity="{HAREA}"/>'
         f'<stop offset="1" stop-color="{GREEN}" stop-opacity="0"/></linearGradient>',
         f'<clipPath id="card"><rect width="{W}" height="{H}" rx="16"/></clipPath>',
         '</defs>',
@@ -171,7 +183,7 @@ def header():
     for s in STACK:
         w = 22 + len(s) * 7.1
         b.append(f'<rect x="{x}" y="172" width="{w:.1f}" height="28" rx="14" fill="{PANEL}" stroke="{BORDER}"/>')
-        b.append(text(x + w / 2, 190.5, s, 12.5, "#c9d1d9", 500, "middle"))
+        b.append(text(x + w / 2, 190.5, s, 12.5, SOFT, 500, "middle"))
         x += w + 10
     return svg(H, b, f"{NAME} — {TITLE}")
 
@@ -197,7 +209,7 @@ def dashboard(data):
     now = dt.datetime.now(dt.timezone.utc).strftime("%d/%m/%Y")
     b = [
         '<defs>',
-        f'<linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{GREEN}" stop-opacity=".35"/>'
+        f'<linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="{GREEN}" stop-opacity="{AREA}"/>'
         f'<stop offset="1" stop-color="{GREEN}" stop-opacity="0"/></linearGradient>',
         f'<linearGradient id="bar" x1="0" x2="1"><stop offset="0" stop-color="{GREEN2}"/><stop offset="1" stop-color="{GREEN}"/></linearGradient>',
         '</defs>',
@@ -258,7 +270,7 @@ def dashboard(data):
     for k, (lab, v) in enumerate(parts):
         y = py + 92 + k * 38
         pct = round(100 * v / tot)
-        b.append(text(rx + 22, y, lab, 12.5, "#c9d1d9", 500))
+        b.append(text(rx + 22, y, lab, 12.5, SOFT, 500))
         b.append(text(rx + rw - 22, y, f"{pct} %", 12.5, TEXT, 600, "end"))
         b.append(f'<rect x="{rx + 22}" y="{y + 9}" width="{bw}" height="6" rx="3" fill="{LINE}"/>')
         if v:
@@ -268,7 +280,9 @@ def dashboard(data):
 
 if __name__ == "__main__":
     data = demo() if "--demo" in sys.argv else fetch()
-    for name, content in (("header.svg", header()), ("profile.svg", dashboard(data))):
-        with open(os.path.join(ROOT, name), "w", encoding="utf-8") as f:
-            f.write(content)
-    print("OK : header.svg, profile.svg")
+    for theme, suffix in (("dark", ""), ("light", "-light")):
+        use(theme)
+        for name, content in ((f"header{suffix}.svg", header()), (f"profile{suffix}.svg", dashboard(data))):
+            with open(os.path.join(ROOT, name), "w", encoding="utf-8") as f:
+                f.write(content)
+    print("OK : header.svg, profile.svg (+ variantes -light)")
